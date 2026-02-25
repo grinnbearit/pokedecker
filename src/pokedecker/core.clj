@@ -9,6 +9,9 @@
 
 (def ^:private cards-url "https://limitlesstcg.com/cards")
 (def ^:private bulbapedia-url "https://bulbapedia.bulbagarden.net")
+(def ^:private expansion-code-cache* (atom nil))
+
+(declare !scrape-expansions)
 
 (def ^:private month->number
   (into {}
@@ -52,6 +55,49 @@
           {:name name
            :code code
            :release-date (some-> release-date str)})))))
+
+(defn normalize-expansion-name
+  "Normalizes expansion names for lookup across sources."
+  [s]
+  (some-> s
+          str/trim
+          str/lower-case
+          (str/replace #"&" " and ")
+          (str/replace #"\(tcg\)" "")
+          (str/replace #"[^\p{Alnum}]+" " ")
+          str/trim
+          not-empty))
+
+(defn build-expansion-code-index
+  "Builds a normalized expansion-name -> Limitless code index from expansion rows."
+  [expansions]
+  (reduce (fn [idx {:keys [name code]}]
+            (if-let [k (normalize-expansion-name name)]
+              (assoc idx k code)
+              idx))
+          {}
+          expansions))
+
+(defn refresh-expansion-code-cache!
+  "Refreshes the cached expansion-name -> code index from Limitless."
+  []
+  (let [idx (-> (!scrape-expansions)
+                build-expansion-code-index)]
+    (reset! expansion-code-cache* idx)))
+
+(defn clear-expansion-code-cache!
+  "Clears the cached expansion-name -> code index."
+  []
+  (reset! expansion-code-cache* nil))
+
+(defn !expansion-name->code
+  "Looks up a Limitless expansion code by expansion name, using a cached index.
+   Returns nil when no match is found."
+  [expansion-name]
+  (when-let [k (normalize-expansion-name expansion-name)]
+    (let [idx (or @expansion-code-cache*
+                  (refresh-expansion-code-cache!))]
+      (get idx k))))
 
 (defn- card-list-url [expansion-code]
   (str cards-url "/" (str/trim expansion-code) "?display=list"))

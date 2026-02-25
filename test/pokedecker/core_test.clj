@@ -32,6 +32,27 @@
             :release-date nil}
            (sut/parse-expansion-row tr)))))
 
+(deftest build-expansion-code-index-test
+  (is (= {"base set" "BS"
+          "diamond and pearl" "DP"}
+         (sut/build-expansion-code-index
+          [{:name "Base Set" :code "BS"}
+           {:name "Diamond & Pearl" :code "DP"}]))))
+
+(deftest expansion-name->code-cache-test
+  (sut/clear-expansion-code-cache!)
+  (let [calls (atom 0)]
+    (with-redefs [sut/!scrape-expansions (fn []
+                                           (swap! calls inc)
+                                           [{:name "Base Set" :code "BS"}
+                                            {:name "WOTC Promos" :code "WP"}])]
+      (is (= "BS" (sut/!expansion-name->code "Base Set")))
+      (is (= "BS" (sut/!expansion-name->code " base   set ")))
+      (is (= "WP" (sut/!expansion-name->code "WOTC Promos")))
+      (is (nil? (sut/!expansion-name->code "Not A Set")))
+      (is (= 1 @calls))))
+  (sut/clear-expansion-code-cache!))
+
 (deftest parse-card-row-test
   (let [html "<table><tr data-hover=\"...\">
                 <td><span class=\"card-set\">WP</span></td>
