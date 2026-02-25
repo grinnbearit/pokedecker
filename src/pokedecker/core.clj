@@ -103,6 +103,14 @@
                   (refresh-expansion-code-cache!))]
       (get idx k))))
 
+(defn enrich-deck-cards-with-limitless-codes
+  "Adds :code to Bulbapedia deck card entries using an expansion-name -> code fn.
+   Entries with no match keep :code nil."
+  [deck-cards expansion-name->code-fn]
+  (map (fn [{:keys [expansion] :as card}]
+         (assoc card :code (some-> expansion expansion-name->code-fn)))
+       deck-cards))
+
 (defn- card-list-url [expansion-code]
   (str cards-url "/" (str/trim expansion-code) "?display=list"))
 
@@ -301,3 +309,11 @@
                 (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
                 (.get))]
     (parse-bulbapedia-deck-doc doc)))
+
+(defn !scrape-bulbapedia-deck-cards-with-codes
+  "Fetches a Bulbapedia deck page by deck title and enriches each entry with
+   a Limitless expansion :code, yielding
+   {:count :name :expansion :card-number :code} maps."
+  [deck-title]
+  (-> (!scrape-bulbapedia-deck-cards deck-title)
+      (enrich-deck-cards-with-limitless-codes !expansion-name->code)))

@@ -194,3 +194,25 @@
     (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6"}
             {:count 3 :name "Potion" :expansion "Base Set" :card-number "94"}]
            (vec (sut/parse-bulbapedia-deck-doc doc))))))
+
+(deftest enrich-deck-cards-with-limitless-codes-test
+  (let [deck-cards [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6"}
+                    {:count 2 :name "Pikachu" :expansion "WOTC Promos" :card-number "1"}
+                    {:count 4 :name "Foo" :expansion "Unknown Set" :card-number "9"}]
+        lookup {"Base Set" "BS"
+                "WOTC Promos" "WP"}]
+    (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}
+            {:count 2 :name "Pikachu" :expansion "WOTC Promos" :card-number "1" :code "WP"}
+            {:count 4 :name "Foo" :expansion "Unknown Set" :card-number "9" :code nil}]
+           (vec (sut/enrich-deck-cards-with-limitless-codes deck-cards lookup))))))
+
+(deftest scrape-bulbapedia-deck-cards-with-codes-test
+  (with-redefs [sut/!scrape-bulbapedia-deck-cards (fn [deck-title]
+                                                    (is (= "Overgrowth" deck-title))
+                                                    [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6"}
+                                                     {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35"}])
+                sut/!expansion-name->code (fn [expansion]
+                                            ({"Base Set" "BS"} expansion))]
+    (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}
+            {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35" :code "BS"}]
+           (vec (sut/!scrape-bulbapedia-deck-cards-with-codes "Overgrowth"))))))
