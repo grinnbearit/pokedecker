@@ -318,22 +318,65 @@
   (-> (!scrape-bulbapedia-deck-cards deck-title)
       (enrich-deck-cards-with-limitless-codes !expansion-name->code)))
 
-(defn !deck-images!
-  "Given an enriched deck ({:count :name :expansion :card-number :code}),
-   returns a flat collection of BufferedImages, repeating each card image by :count.
-   Throws when an entry has no :code."
-  [enriched-deck]
+(defn- validate-deck-entry!
+  [{:keys [count code card-number name expansion] :as entry}]
+  (when-not code
+    (throw (ex-info "Missing Limitless code for deck card"
+                    {:entry entry
+                     :name name
+                     :expansion expansion
+                     :card-number card-number})))
+  (let [n (or count 0)]
+    (when (neg? n)
+      (throw (ex-info "Negative deck card count"
+                      {:entry entry
+                       :count n})))
+    n))
+
+(defn- sanitize-filename-part [s]
+  (-> (str s)
+      str/trim
+      (str/replace #"[^\p{Alnum}._-]+" "-")
+      (str/replace #"^-+|-+$" "")))
+
+(defn deck-image-export-filename
+  "Returns a deterministic export filename for one deck card copy."
+  [{:keys [code card-number name]} copy-index]
+  (format "%s_%s_%03d_%s.png"
+          (sanitize-filename-part (or code "UNKNOWN"))
+          (sanitize-filename-part (str card-number))
+          copy-index
+          (sanitize-filename-part (or name "card"))))
+
+(defn !copy-file!
+  "Copies a file to destination path, creating parent directories."
+  [source-path destination-path]
+  (let [dest-file (io/file destination-path)
+        parent-file (.getParentFile dest-file)]
+    (when parent-file
+      (.mkdirs parent-file))
+    (Files/copy (.toPath (io/file source-path))
+                (.toPath dest-file)
+                (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    destination-path))
+
+(defn !write-deck-images!
+  "Writes an enriched deck's images to `output-dir`, one file per card copy.
+   Returns a collection of written file paths."
+  [enriched-deck output-dir]
   (mapcat (fn [{:keys [count code card-number name expansion] :as entry}]
-            (when-not code
-              (throw (ex-info "Missing Limitless code for deck card"
-                              {:entry entry
-                               :name name
-                               :expansion expansion
-                               :card-number card-number})))
-            (let [n (or count 0)]
-              (when (neg? n)
-                (throw (ex-info "Negative deck card count"
-                                {:entry entry
-                                 :count n})))
-              (repeatedly n #(!card-image! code card-number))))
+            (let [n (validate-deck-entry! entry)
+                  source-path (!card-image-file! code card-number)]
+              (map (fn [copy-index]
+                     (!copy-file! source-path
+                                  (str (io/file output-dir
+                                                (deck-image-export-filename entry copy-index)))))
+                   (range 1 (inc n)))))
           enriched-deck))
+
+(defn !export-bulbapedia-deck-images!
+  "Fetches a Bulbapedia deck by title, enriches it with Limitless codes, and writes
+   all card image copies to `output-dir`. Returns written file paths."
+  [deck-title output-dir]
+  (-> (!scrape-bulbapedia-deck-cards-with-codes deck-title)
+      (!write-deck-images! output-dir)))

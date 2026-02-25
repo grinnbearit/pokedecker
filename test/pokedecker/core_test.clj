@@ -217,22 +217,47 @@
             {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35" :code "BS"}]
            (vec (sut/!scrape-bulbapedia-deck-cards-with-codes "Overgrowth"))))))
 
-(deftest deck-images-test
-  (let [calls (atom [])]
-    (with-redefs [sut/!card-image! (fn [code card-number]
-                                     (swap! calls conj [code (str card-number)])
-                                     (str code ":" card-number))]
-      (is (= ["BS:6" "BS:35" "BS:35"]
-             (vec (sut/!deck-images!
-                   [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}
-                    {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35" :code "BS"}]))))
-      (is (= [["BS" "6"] ["BS" "35"] ["BS" "35"]]
-             @calls)))))
+(deftest deck-image-export-filename-test
+  (is (= "BS_6_001_Gyarados.png"
+         (sut/deck-image-export-filename
+          {:code "BS" :card-number "6" :name "Gyarados"} 1)))
+  (is (= "WP_24_002______-s-Pikachu.png"
+         (sut/deck-image-export-filename
+          {:code "WP" :card-number "24" :name "_____'s Pikachu"} 2))))
 
-(deftest deck-images-missing-code-test
+(deftest write-deck-images-test
+  (let [tmp-dir (.toFile (Files/createTempDirectory "pokedecker-deck-out" (make-array java.nio.file.attribute.FileAttribute 0)))
+        source-path (str (.getAbsolutePath tmp-dir) "/source.png")]
+    (write-test-png! source-path)
+    (with-redefs [sut/!card-image-file! (fn [code card-number]
+                                          (is (= "BS" code))
+                                          (is (= "6" (str card-number)))
+                                          source-path)]
+      (let [written (vec (sut/!write-deck-images!
+                          [{:count 2 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}]
+                          (str (.getAbsolutePath tmp-dir) "/export")))]
+        (is (= 2 (count written)))
+        (is (.exists (java.io.File. (first written))))
+        (is (.exists (java.io.File. (second written))))
+        (is (not= (first written) (second written)))))))
+
+(deftest write-deck-images-missing-code-test
   (is (thrown-with-msg?
        clojure.lang.ExceptionInfo
        #"Missing Limitless code"
        (dorun
-        (sut/!deck-images!
-         [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code nil}])))))
+        (sut/!write-deck-images!
+         [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code nil}]
+         "tmp/out")))))
+
+(deftest export-bulbapedia-deck-images-test
+  (with-redefs [sut/!scrape-bulbapedia-deck-cards-with-codes (fn [deck-title]
+                                                               (is (= "Overgrowth" deck-title))
+                                                               [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}])
+                sut/!write-deck-images! (fn [deck output-dir]
+                                          (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}]
+                                                 (vec deck)))
+                                          (is (= "output/overgrowth" output-dir))
+                                          ["output/overgrowth/BS_6_001_Gyarados.png"])]
+    (is (= ["output/overgrowth/BS_6_001_Gyarados.png"]
+           (vec (sut/!export-bulbapedia-deck-images! "Overgrowth" "output/overgrowth"))))))
