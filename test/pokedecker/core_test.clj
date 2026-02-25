@@ -40,11 +40,30 @@
                 <td class=\"md-only\">
                   <a href=\"/cards/WP/1\"><span class=\"ptcg-symbol\">L</span> Basic</a>
                 </td>
+                <td class=\"md-only\"><a href=\"/cards/WP/1\"></a></td>
               </tr></table>"
         tr (.selectFirst (Jsoup/parse html) "tr")]
     (is (= {:number "1"
             :name "Pikachu"
-            :type "Basic"}
+            :type "Basic"
+            :rarity nil}
+           (sut/parse-card-row tr)))))
+
+(deftest parse-card-row-with-rarity-test
+  (let [html "<table><tr data-hover=\"...\">
+                <td><span class=\"card-set\">BS</span></td>
+                <td><a href=\"/cards/BS/1\">1</a></td>
+                <td><a href=\"/cards/BS/1\">Alakazam</a></td>
+                <td class=\"md-only\">
+                  <a href=\"/cards/BS/1\"><span class=\"ptcg-symbol\">P</span> Stage 2</a>
+                </td>
+                <td class=\"md-only\"><a href=\"/cards/BS/1\">Holo Rare</a></td>
+              </tr></table>"
+        tr (.selectFirst (Jsoup/parse html) "tr")]
+    (is (= {:number "1"
+            :name "Alakazam"
+            :type "Stage 2"
+            :rarity "Holo Rare"}
            (sut/parse-card-row tr)))))
 
 (deftest parse-card-image-url-test

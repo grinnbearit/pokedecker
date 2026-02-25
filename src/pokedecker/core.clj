@@ -66,18 +66,20 @@
       (some-> (.text copy) str/trim not-empty))))
 
 (defn parse-card-row
-  "Parses a single card list <tr> into {:number :name :type}.
+  "Parses a single card list <tr> into {:number :name :type :rarity}.
    Returns nil for header/malformed rows."
   [^Element tr]
   (let [cells (.select tr "td")]
-    (when (>= (.size cells) 4)
+    (when (>= (.size cells) 5)
       (let [number (some-> (.get cells 1) .text str/trim not-empty)
             name (some-> (.get cells 2) .text str/trim not-empty)
-            type (cleaned-text (.get cells 3) ".ptcg-symbol")]
+            type (cleaned-text (.get cells 3) ".ptcg-symbol")
+            rarity (some-> (.get cells 4) .text str/trim not-empty)]
         (when (and number name)
           {:number number
            :name name
-           :type type})))))
+           :type type
+           :rarity rarity})))))
 
 (defn parse-card-image-url
   "Parses a card detail page and returns the card image URL.
@@ -99,7 +101,7 @@
 
 (defn !scrape-expansion-cards
   "Fetches an expansion page in list view and returns
-   {:number :name :type} maps."
+   {:number :name :type :rarity} maps."
   [expansion-code]
   (let [doc (-> (Jsoup/connect (card-list-url expansion-code))
                 (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
