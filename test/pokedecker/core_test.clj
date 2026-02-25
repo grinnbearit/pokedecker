@@ -1,7 +1,10 @@
 (ns pokedecker.core-test
   (:require [clojure.test :refer :all]
             [pokedecker.core :as sut])
-  (:import (org.jsoup Jsoup)))
+  (:import (java.awt.image BufferedImage)
+           (java.nio.file Files)
+           (javax.imageio ImageIO)
+           (org.jsoup Jsoup)))
 
 (deftest parse-limitless-date-test
   (is (= "2026-01-30"
@@ -52,6 +55,45 @@
       (is (nil? (sut/!expansion-name->code "Not A Set")))
       (is (= 1 @calls))))
   (sut/clear-expansion-code-cache!))
+
+(defn- write-test-png! [path]
+  (let [img (BufferedImage. 2 3 BufferedImage/TYPE_INT_ARGB)]
+    (.setRGB img 0 0 (unchecked-int 0xFFFF0000))
+    (.mkdirs (.getParentFile (java.io.File. path)))
+    (ImageIO/write img "png" (java.io.File. path))
+    path))
+
+(deftest card-image-cache-path-test
+  (binding [sut/*card-image-cache-root* "tmp/test-images"]
+    (is (= "tmp/test-images/WP/1.png"
+           (sut/card-image-cache-path "wp" 1)))))
+
+(deftest card-image-cache-miss-persists-and-returns-image-test
+  (let [tmp-dir (.toFile (Files/createTempDirectory "pokedecker-img-cache" (make-array java.nio.file.attribute.FileAttribute 0)))
+        source-path (str (.getAbsolutePath tmp-dir) "/source.png")
+        source-url (.toString (.toURI (java.io.File. (write-test-png! source-path))))
+        fetch-calls (atom 0)]
+    (binding [sut/*card-image-cache-root* (.getAbsolutePath tmp-dir)]
+      (with-redefs [sut/!fetch-card-image-url (fn [_ _]
+                                                (swap! fetch-calls inc)
+                                                source-url)]
+        (let [img (sut/!card-image! "WP" 1)
+              cached-path (sut/card-image-cache-path "WP" 1)]
+          (is (instance? BufferedImage img))
+          (is (= 2 (.getWidth img)))
+          (is (.exists (java.io.File. cached-path)))
+          (is (= 1 @fetch-calls)))))))
+
+(deftest card-image-cache-hit-avoids-fetch-test
+  (let [tmp-dir (.toFile (Files/createTempDirectory "pokedecker-img-hit" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (binding [sut/*card-image-cache-root* (.getAbsolutePath tmp-dir)]
+      (let [cached-path (sut/card-image-cache-path "BS" 6)]
+        (write-test-png! cached-path)
+        (with-redefs [sut/!fetch-card-image-url (fn [& _]
+                                                  (throw (ex-info "should not fetch" {})))]
+          (let [img (sut/!card-image! "BS" 6)]
+            (is (instance? BufferedImage img))
+            (is (= 3 (.getHeight img)))))))))
 
 (deftest parse-card-row-test
   (let [html "<table><tr data-hover=\"...\">

@@ -1,15 +1,19 @@
 (ns pokedecker.core
-  (:require [clojure.string :as str])
-  (:import (java.net URLDecoder)
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str])
+  (:import (java.net URL URLDecoder)
+           (java.nio.file Files StandardCopyOption)
            (java.time LocalDate)
            (java.time.format TextStyle)
            (java.util Locale)
+           (javax.imageio ImageIO)
            (org.jsoup Jsoup)
            (org.jsoup.nodes Element)))
 
 (def ^:private cards-url "https://limitlesstcg.com/cards")
 (def ^:private bulbapedia-url "https://bulbapedia.bulbagarden.net")
 (def ^:private expansion-code-cache* (atom nil))
+(def ^:dynamic *card-image-cache-root* "data/images")
 
 (declare !scrape-expansions)
 
@@ -104,6 +108,16 @@
 
 (defn- card-profile-url [expansion-code card-number]
   (str cards-url "/" (str/trim expansion-code) "/" (str/trim (str card-number))))
+
+(defn card-image-cache-path
+  "Returns the cache path for a card image (PNG)."
+  [expansion-code card-number]
+  (str *card-image-cache-root*
+       "/"
+       (str/upper-case (str/trim expansion-code))
+       "/"
+       (str/trim (str card-number))
+       ".png"))
 
 (defn- bulbapedia-deck-url [deck-title]
   (str bulbapedia-url "/wiki/"
@@ -222,6 +236,61 @@
                 (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
                 (.get))]
     (parse-card-image-url doc)))
+
+(defn !download-file!
+  "Downloads a URL to a destination file path atomically."
+  [url destination-path]
+  (let [dest-file (io/file destination-path)
+        parent-file (.getParentFile dest-file)]
+    (when parent-file
+      (.mkdirs parent-file))
+    (let [parent-path (if parent-file (.toPath parent-file) (.toPath (io/file ".")))
+          temp-path (Files/createTempFile parent-path "pokedecker-" ".tmp" (make-array java.nio.file.attribute.FileAttribute 0))]
+      (try
+        (with-open [in (.openStream (URL. url))]
+          (Files/copy in temp-path (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING])))
+        (Files/move temp-path (.toPath dest-file)
+                    (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+        destination-path
+        (catch Throwable t
+          (Files/deleteIfExists temp-path)
+          (throw t))))))
+
+(defn !card-image-file!
+  "Ensures a card image is cached on disk and returns its file path."
+  [expansion-code card-number]
+  (let [path (card-image-cache-path expansion-code card-number)]
+    (if (.exists (io/file path))
+      path
+      (let [url (!fetch-card-image-url expansion-code card-number)]
+        (when-not url
+          (throw (ex-info "Card image URL not found"
+                          {:expansion-code expansion-code
+                           :card-number (str card-number)})))
+        (!download-file! url path)))))
+
+(defn !read-image!
+  "Reads an image file and returns a BufferedImage, throwing on decode failure."
+  [path]
+  (or (ImageIO/read (io/file path))
+      (throw (ex-info "Failed to decode image file"
+                      {:kind :image-decode-failed
+                       :path path}))))
+
+(defn !card-image!
+  "Returns a cached card image as a BufferedImage. On cache miss, fetches and persists it."
+  [expansion-code card-number]
+  (let [path (card-image-cache-path expansion-code card-number)]
+    (try
+      (-> (!card-image-file! expansion-code card-number)
+          (!read-image!))
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :image-decode-failed (:kind (ex-data e)))
+          (do
+            (.delete (io/file path))
+            (-> (!card-image-file! expansion-code card-number)
+                (!read-image!)))
+          (throw e))))))
 
 (defn !scrape-bulbapedia-deck-cards
   "Fetches a Bulbapedia deck page by deck title (e.g. \"Overgrowth\") and
