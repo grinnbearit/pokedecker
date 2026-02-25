@@ -76,3 +76,58 @@
         doc (Jsoup/parse html)]
     (is (= "https://images.pokemontcg.io/basep/1_hires.png"
            (sut/parse-card-image-url doc)))))
+
+(deftest parse-bulbapedia-card-link-test
+  (is (= {:expansion "Base Set"
+          :card-number "6"}
+         (sut/parse-bulbapedia-card-link "/wiki/Gyarados_(Base_Set_6)")))
+  (is (= {:expansion "Diamond & Pearl"
+          :card-number "123"}
+         (sut/parse-bulbapedia-card-link "/wiki/Foo_(Diamond_%26_Pearl_123)"))))
+
+(deftest bulbapedia-deck-url-test
+  (is (= "https://bulbapedia.bulbagarden.net/wiki/Overgrowth_(TCG)"
+         (#'sut/bulbapedia-deck-url "Overgrowth")))
+  (is (= "https://bulbapedia.bulbagarden.net/wiki/Brushfire_(TCG)"
+         (#'sut/bulbapedia-deck-url "Brushfire"))))
+
+(deftest parse-bulbapedia-deck-row-test
+  (let [html "<table class=\"roundy\"><tr>
+                <td style=\"text-align:center;\">2×</td>
+                <td><a href=\"/wiki/Magikarp_(Base_Set_35)\" title=\"Magikarp (Base Set 35)\">Magikarp</a></td>
+                <th>Type</th>
+                <td>Uncommon</td>
+              </tr></table>"
+        tr (.selectFirst (Jsoup/parse html) "tr")]
+    (is (= {:count 2
+            :name "Magikarp"
+            :expansion "Base Set"
+            :card-number "35"}
+           (sut/parse-bulbapedia-deck-row tr)))))
+
+(deftest parse-bulbapedia-deck-doc-test
+  (let [html "<html><body>
+                <table class=\"roundy\">
+                  <tr><th>Quantity</th><th>Card</th><th>Type</th><th>Rarity</th></tr>
+                  <tr>
+                    <td>1×</td>
+                    <td><a href=\"/wiki/Gyarados_(Base_Set_6)\">Gyarados</a></td>
+                    <th>Water</th>
+                    <td>Rare Holo</td>
+                  </tr>
+                  <tr>
+                    <td>3×</td>
+                    <td><a href=\"/wiki/Potion_(Base_Set_94)\">Potion</a></td>
+                    <th>Trainer</th>
+                    <td>Common</td>
+                  </tr>
+                </table>
+                <table class=\"roundy\">
+                  <tr><th>Something else</th></tr>
+                  <tr><td>Ignore me</td></tr>
+                </table>
+              </body></html>"
+        doc (Jsoup/parse html)]
+    (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6"}
+            {:count 3 :name "Potion" :expansion "Base Set" :card-number "94"}]
+           (vec (sut/parse-bulbapedia-deck-doc doc))))))

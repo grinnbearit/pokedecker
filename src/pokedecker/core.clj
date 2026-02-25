@@ -1,12 +1,14 @@
 (ns pokedecker.core
   (:require [clojure.string :as str])
-  (:import (java.time LocalDate)
+  (:import (java.net URLDecoder)
+           (java.time LocalDate)
            (java.time.format TextStyle)
            (java.util Locale)
            (org.jsoup Jsoup)
            (org.jsoup.nodes Element)))
 
 (def ^:private cards-url "https://limitlesstcg.com/cards")
+(def ^:private bulbapedia-url "https://bulbapedia.bulbagarden.net")
 
 (def ^:private month->number
   (into {}
@@ -57,6 +59,13 @@
 (defn- card-profile-url [expansion-code card-number]
   (str cards-url "/" (str/trim expansion-code) "/" (str/trim (str card-number))))
 
+(defn- bulbapedia-deck-url [deck-title]
+  (str bulbapedia-url "/wiki/"
+       (-> deck-title
+           str/trim
+           (str/replace " " "_"))
+       "_(TCG)"))
+
 (defn- cleaned-text
   "Returns text content after removing decorative nodes matched by selector."
   [^Element el selector]
@@ -89,6 +98,57 @@
     (or (some-> (.attr img "data-src") str/trim not-empty)
         (some-> (.attr img "src") str/trim not-empty))))
 
+(defn- url-decode [s]
+  (URLDecoder/decode s "UTF-8"))
+
+(defn parse-bulbapedia-card-link
+  "Parses a Bulbapedia card link href like /wiki/Gyarados_(Base_Set_6)
+   into {:expansion \"Base Set\" :card-number \"6\"}."
+  [href]
+  (when-let [[_ slug] (when-let [s (some-> href str/trim)]
+                        (re-matches #"(?:https?://[^/]+)?/wiki/([^?#]+)" s))]
+    (let [decoded (url-decode slug)]
+      (when-let [[_ suffix] (re-matches #".*?\((.+)\)$" decoded)]
+        (let [idx (.lastIndexOf ^String suffix "_")]
+          (when (pos? idx)
+            (let [expansion (subs suffix 0 idx)
+                  card-number (subs suffix (inc idx))]
+              (when (and (not (str/blank? expansion))
+                         (not (str/blank? card-number)))
+                {:expansion (str/replace expansion "_" " ")
+                 :card-number (str/replace card-number "_" " ")}))))))))
+
+(defn parse-bulbapedia-deck-row
+  "Parses a Bulbapedia decklist row into {:count :name :expansion :card-number}.
+   Returns nil for non-deck rows."
+  [^Element tr]
+  (let [cells (.select tr "td")]
+    (when (>= (.size cells) 2)
+      (let [qty-text (some-> (.get cells 0) .text str/trim not-empty)
+            card-link (.selectFirst (.get cells 1) "a[href*=/wiki/]")
+            name (some-> card-link .text str/trim not-empty)
+            href (some-> card-link (.attr "href") str/trim not-empty)
+            count (when-let [[_ n] (when-let [s qty-text]
+                                     (re-find #"(\d+)" s))]
+                    (Long/parseLong n))]
+        (when-let [{:keys [expansion card-number]} (and count name href (parse-bulbapedia-card-link href))]
+          {:count count
+           :name name
+           :expansion expansion
+           :card-number card-number})))))
+
+(defn parse-bulbapedia-deck-doc
+  "Parses a Bulbapedia deck page and returns deck card entries."
+  [^org.jsoup.nodes.Document doc]
+  (->> (.select doc "table.roundy")
+       (filter (fn [^Element table]
+                 (let [header-text (some-> (.selectFirst table "tr") .text str/lower-case)]
+                   (and header-text
+                        (str/includes? header-text "quantity")
+                        (str/includes? header-text "card")))))
+       (mapcat (fn [^Element table]
+                 (keep parse-bulbapedia-deck-row (.select table "tr"))))))
+
 (defn !scrape-expansions
   "Fetches expansions from https://limitlesstcg.com/cards and returns
    a sequence of {:name :code :release-date} maps."
@@ -116,3 +176,13 @@
                 (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
                 (.get))]
     (parse-card-image-url doc)))
+
+(defn !scrape-bulbapedia-deck-cards
+  "Fetches a Bulbapedia deck page by deck title (e.g. \"Overgrowth\") and
+   returns {:count :name :expansion :card-number} maps for cards in the deck list."
+  [deck-title]
+  (let [url (bulbapedia-deck-url deck-title)
+        doc (-> (Jsoup/connect url)
+                (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
+                (.get))]
+    (parse-bulbapedia-deck-doc doc)))
