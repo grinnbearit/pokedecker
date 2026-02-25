@@ -54,6 +54,9 @@
 (defn- card-list-url [expansion-code]
   (str cards-url "/" (str/trim expansion-code) "?display=list"))
 
+(defn- card-profile-url [expansion-code card-number]
+  (str cards-url "/" (str/trim expansion-code) "/" (str/trim (str card-number))))
+
 (defn- cleaned-text
   "Returns text content after removing decorative nodes matched by selector."
   [^Element el selector]
@@ -76,6 +79,14 @@
            :name name
            :type type})))))
 
+(defn parse-card-image-url
+  "Parses a card detail page and returns the card image URL.
+   Prefers the high-res `data-src` attribute when present."
+  [^org.jsoup.nodes.Document doc]
+  (when-let [img (.selectFirst doc "div.card-image img")]
+    (or (some-> (.attr img "data-src") str/trim not-empty)
+        (some-> (.attr img "src") str/trim not-empty))))
+
 (defn !scrape-expansions
   "Fetches expansions from https://limitlesstcg.com/cards and returns
    a sequence of {:name :code :release-date} maps."
@@ -95,3 +106,11 @@
                 (.get))]
     (->> (.select doc "table.card-list tr")
          (keep parse-card-row))))
+
+(defn !fetch-card-image-url
+  "Fetches a card detail page and returns the card image URL."
+  [expansion-code card-number]
+  (let [doc (-> (Jsoup/connect (card-profile-url expansion-code card-number))
+                (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
+                (.get))]
+    (parse-card-image-url doc)))

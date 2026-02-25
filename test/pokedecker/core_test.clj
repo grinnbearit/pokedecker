@@ -46,3 +46,14 @@
             :name "Pikachu"
             :type "Basic"}
            (sut/parse-card-row tr)))))
+
+(deftest parse-card-image-url-test
+  (let [html "<html><body>
+                <div class=\"card-image\">
+                  <img class=\"card\" src=\"https://images.pokemontcg.io/basep/1.png\"
+                       data-src=\"https://images.pokemontcg.io/basep/1_hires.png\">
+                </div>
+              </body></html>"
+        doc (Jsoup/parse html)]
+    (is (= "https://images.pokemontcg.io/basep/1_hires.png"
+           (sut/parse-card-image-url doc)))))
