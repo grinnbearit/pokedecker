@@ -317,3 +317,23 @@
   [deck-title]
   (-> (!scrape-bulbapedia-deck-cards deck-title)
       (enrich-deck-cards-with-limitless-codes !expansion-name->code)))
+
+(defn !deck-images!
+  "Given an enriched deck ({:count :name :expansion :card-number :code}),
+   returns a flat collection of BufferedImages, repeating each card image by :count.
+   Throws when an entry has no :code."
+  [enriched-deck]
+  (mapcat (fn [{:keys [count code card-number name expansion] :as entry}]
+            (when-not code
+              (throw (ex-info "Missing Limitless code for deck card"
+                              {:entry entry
+                               :name name
+                               :expansion expansion
+                               :card-number card-number})))
+            (let [n (or count 0)]
+              (when (neg? n)
+                (throw (ex-info "Negative deck card count"
+                                {:entry entry
+                                 :count n})))
+              (repeatedly n #(!card-image! code card-number))))
+          enriched-deck))

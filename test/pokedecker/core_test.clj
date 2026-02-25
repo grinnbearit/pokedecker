@@ -216,3 +216,23 @@
     (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}
             {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35" :code "BS"}]
            (vec (sut/!scrape-bulbapedia-deck-cards-with-codes "Overgrowth"))))))
+
+(deftest deck-images-test
+  (let [calls (atom [])]
+    (with-redefs [sut/!card-image! (fn [code card-number]
+                                     (swap! calls conj [code (str card-number)])
+                                     (str code ":" card-number))]
+      (is (= ["BS:6" "BS:35" "BS:35"]
+             (vec (sut/!deck-images!
+                   [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}
+                    {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35" :code "BS"}]))))
+      (is (= [["BS" "6"] ["BS" "35"] ["BS" "35"]]
+             @calls)))))
+
+(deftest deck-images-missing-code-test
+  (is (thrown-with-msg?
+       clojure.lang.ExceptionInfo
+       #"Missing Limitless code"
+       (dorun
+        (sut/!deck-images!
+         [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code nil}])))))
