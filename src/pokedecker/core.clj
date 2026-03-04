@@ -12,10 +12,11 @@
 
 (def ^:private cards-url "https://limitlesstcg.com/cards")
 (def ^:private bulbapedia-url "https://bulbapedia.bulbagarden.net")
+(def ^:private user-agent "pokedecker/0.1 (Clojure; educational scraper)")
 (def ^:private expansion-code-cache* (atom nil))
 (def ^:dynamic *card-image-cache-root* "data/images")
 
-(declare !scrape-expansions)
+(declare scrape-expansions!)
 
 (def ^:private month->number
   (into {}
@@ -36,7 +37,7 @@
   "Parses Limitless release dates like \"30 Jan 26\" into a LocalDate."
   [s]
   (when-let [date-str (some-> s str/trim not-empty)]
-    (when-let [[_ d mon yy] (re-matches #"(?i)^\s*(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2})\s*$" date-str)]
+    (when-let [[_ d mon yy] (re-matches #"(?i)^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2})$" date-str)]
       (let [month (get month->number (str/lower-case mon))
             year (normalize-2-digit-year (Long/parseLong yy))]
         (when month
@@ -58,7 +59,7 @@
         (when (and name code)
           {:name name
            :code code
-           :release-date (some-> release-date str)})))))
+           :release-date release-date})))))
 
 (defn normalize-expansion-name
   "Normalizes expansion names for lookup across sources."
@@ -75,17 +76,15 @@
 (defn build-expansion-code-index
   "Builds a normalized expansion-name -> Limitless code index from expansion rows."
   [expansions]
-  (reduce (fn [idx {:keys [name code]}]
-            (if-let [k (normalize-expansion-name name)]
-              (assoc idx k code)
-              idx))
-          {}
-          expansions))
+  (into {} (keep (fn [{:keys [name code]}]
+                   (when-let [k (normalize-expansion-name name)]
+                     [k code]))
+                 expansions)))
 
 (defn refresh-expansion-code-cache!
   "Refreshes the cached expansion-name -> code index from Limitless."
   []
-  (let [idx (-> (!scrape-expansions)
+  (let [idx (-> (scrape-expansions!)
                 build-expansion-code-index)]
     (reset! expansion-code-cache* idx)))
 
@@ -94,7 +93,7 @@
   []
   (reset! expansion-code-cache* nil))
 
-(defn !expansion-name->code
+(defn expansion-name->code!
   "Looks up a Limitless expansion code by expansion name, using a cached index.
    Returns nil when no match is found."
   [expansion-name]
@@ -173,18 +172,18 @@
   "Parses a Bulbapedia card link href like /wiki/Gyarados_(Base_Set_6)
    into {:expansion \"Base Set\" :card-number \"6\"}."
   [href]
-  (when-let [[_ slug] (when-let [s (some-> href str/trim)]
-                        (re-matches #"(?:https?://[^/]+)?/wiki/([^?#]+)" s))]
-    (let [decoded (url-decode slug)]
-      (when-let [[_ suffix] (re-matches #".*?\((.+)\)$" decoded)]
-        (let [idx (.lastIndexOf ^String suffix "_")]
-          (when (pos? idx)
-            (let [expansion (subs suffix 0 idx)
-                  card-number (subs suffix (inc idx))]
-              (when (and (not (str/blank? expansion))
-                         (not (str/blank? card-number)))
-                {:expansion (str/replace expansion "_" " ")
-                 :card-number (str/replace card-number "_" " ")}))))))))
+  (when-let [s (some-> href str/trim not-empty)]
+    (when-let [[_ slug] (re-matches #"(?:https?://[^/]+)?/wiki/([^?#]+)" s)]
+      (let [decoded (url-decode slug)]
+        (when-let [[_ suffix] (re-matches #".*?\((.+)\)$" decoded)]
+          (let [idx (.lastIndexOf ^String suffix "_")]
+            (when (pos? idx)
+              (let [expansion (subs suffix 0 idx)
+                    card-number (subs suffix (inc idx))]
+                (when (and (not (str/blank? expansion))
+                           (not (str/blank? card-number)))
+                  {:expansion (str/replace expansion "_" " ")
+                   :card-number (str/replace card-number "_" " ")})))))))))
 
 (defn parse-bulbapedia-deck-row
   "Parses a Bulbapedia decklist row into {:count :name :expansion :card-number}.
@@ -196,14 +195,13 @@
             card-link (.selectFirst (.get cells 1) "a[href*=/wiki/]")
             name (some-> card-link .text str/trim not-empty)
             href (some-> card-link (.attr "href") str/trim not-empty)
-            count (when-let [[_ n] (when-let [s qty-text]
-                                     (re-find #"(\d+)" s))]
-                    (Long/parseLong n))]
-        (when-let [{:keys [expansion card-number]} (and count name href (parse-bulbapedia-card-link href))]
-          {:count count
-           :name name
-           :expansion expansion
-           :card-number card-number})))))
+            count (some->> qty-text (re-find #"(\d+)") second Long/parseLong)]
+        (when (and count name href)
+          (when-let [{:keys [expansion card-number]} (parse-bulbapedia-card-link href)]
+            {:count count
+             :name name
+             :expansion expansion
+             :card-number card-number}))))))
 
 (defn parse-bulbapedia-deck-doc
   "Parses a Bulbapedia deck page and returns deck card entries."
@@ -217,42 +215,45 @@
        (mapcat (fn [^Element table]
                  (keep parse-bulbapedia-deck-row (.select table "tr"))))))
 
-(defn !scrape-expansions
+(defn scrape-expansions!
   "Fetches expansions from https://limitlesstcg.com/cards and returns
    a sequence of {:name :code :release-date} maps."
   []
   (let [doc (-> (Jsoup/connect cards-url)
-                (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
+                (.userAgent user-agent)
                 (.get))]
     (->> (.select doc "table.sets-table tr")
          (keep parse-expansion-row))))
 
-(defn !scrape-expansion-cards
+(defn scrape-expansion-cards!
   "Fetches an expansion page in list view and returns
    {:number :name :type :rarity} maps."
   [expansion-code]
   (let [doc (-> (Jsoup/connect (card-list-url expansion-code))
-                (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
+                (.userAgent user-agent)
                 (.get))]
     (->> (.select doc "table.card-list tr")
          (keep parse-card-row))))
 
-(defn !fetch-card-image-url
+(defn fetch-card-image-url!
   "Fetches a card detail page and returns the card image URL."
   [expansion-code card-number]
   (let [doc (-> (Jsoup/connect (card-profile-url expansion-code card-number))
-                (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
+                (.userAgent user-agent)
                 (.get))]
     (parse-card-image-url doc)))
 
-(defn !download-file!
+(defn- ensure-parent-dirs! [^java.io.File file]
+  (when-let [parent (.getParentFile file)]
+    (.mkdirs parent)))
+
+(defn download-file!
   "Downloads a URL to a destination file path atomically."
   [url destination-path]
-  (let [dest-file (io/file destination-path)
-        parent-file (.getParentFile dest-file)]
-    (when parent-file
-      (.mkdirs parent-file))
-    (let [parent-path (if parent-file (.toPath parent-file) (.toPath (io/file ".")))
+  (let [dest-file (io/file destination-path)]
+    (ensure-parent-dirs! dest-file)
+    (let [parent-file (.getParentFile dest-file)
+          parent-path (if parent-file (.toPath parent-file) (.toPath (io/file ".")))
           temp-path (Files/createTempFile parent-path "pokedecker-" ".tmp" (make-array java.nio.file.attribute.FileAttribute 0))]
       (try
         (with-open [in (.openStream (URL. url))]
@@ -264,20 +265,20 @@
           (Files/deleteIfExists temp-path)
           (throw t))))))
 
-(defn !card-image-file!
+(defn card-image-file!
   "Ensures a card image is cached on disk and returns its file path."
   [expansion-code card-number]
   (let [path (card-image-cache-path expansion-code card-number)]
     (if (.exists (io/file path))
       path
-      (let [url (!fetch-card-image-url expansion-code card-number)]
+      (let [url (fetch-card-image-url! expansion-code card-number)]
         (when-not url
           (throw (ex-info "Card image URL not found"
                           {:expansion-code expansion-code
                            :card-number (str card-number)})))
-        (!download-file! url path)))))
+        (download-file! url path)))))
 
-(defn !read-image!
+(defn read-image!
   "Reads an image file and returns a BufferedImage, throwing on decode failure."
   [path]
   (or (ImageIO/read (io/file path))
@@ -285,38 +286,38 @@
                       {:kind :image-decode-failed
                        :path path}))))
 
-(defn !card-image!
+(defn card-image!
   "Returns a cached card image as a BufferedImage. On cache miss, fetches and persists it."
   [expansion-code card-number]
   (let [path (card-image-cache-path expansion-code card-number)]
     (try
-      (-> (!card-image-file! expansion-code card-number)
-          (!read-image!))
+      (-> (card-image-file! expansion-code card-number)
+          (read-image!))
       (catch clojure.lang.ExceptionInfo e
         (if (= :image-decode-failed (:kind (ex-data e)))
           (do
             (.delete (io/file path))
-            (-> (!card-image-file! expansion-code card-number)
-                (!read-image!)))
+            (-> (card-image-file! expansion-code card-number)
+                (read-image!)))
           (throw e))))))
 
-(defn !scrape-bulbapedia-deck-cards
+(defn scrape-bulbapedia-deck-cards!
   "Fetches a Bulbapedia deck page by deck title (e.g. \"Overgrowth\") and
    returns {:count :name :expansion :card-number} maps for cards in the deck list."
   [deck-title]
   (let [url (bulbapedia-deck-url deck-title)
         doc (-> (Jsoup/connect url)
-                (.userAgent "pokedecker/0.1 (Clojure; educational scraper)")
+                (.userAgent user-agent)
                 (.get))]
     (parse-bulbapedia-deck-doc doc)))
 
-(defn !scrape-bulbapedia-deck-cards-with-codes
+(defn scrape-bulbapedia-deck-cards-with-codes!
   "Fetches a Bulbapedia deck page by deck title and enriches each entry with
    a Limitless expansion :code, yielding
    {:count :name :expansion :card-number :code} maps."
   [deck-title]
-  (-> (!scrape-bulbapedia-deck-cards deck-title)
-      (enrich-deck-cards-with-limitless-codes !expansion-name->code)))
+  (-> (scrape-bulbapedia-deck-cards! deck-title)
+      (enrich-deck-cards-with-limitless-codes expansion-name->code!)))
 
 (defn- validate-deck-entry!
   [{:keys [count code card-number name expansion] :as entry}]
@@ -348,35 +349,34 @@
           copy-index
           (sanitize-filename-part (or name "card"))))
 
-(defn !copy-file!
+(defn copy-file!
   "Copies a file to destination path, creating parent directories."
   [source-path destination-path]
-  (let [dest-file (io/file destination-path)
-        parent-file (.getParentFile dest-file)]
-    (when parent-file
-      (.mkdirs parent-file))
+  (let [dest-file (io/file destination-path)]
+    (ensure-parent-dirs! dest-file)
     (Files/copy (.toPath (io/file source-path))
                 (.toPath dest-file)
                 (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
     destination-path))
 
-(defn !write-deck-images!
+(defn write-deck-images!
   "Writes an enriched deck's images to `output-dir`, one file per card copy.
    Returns a collection of written file paths."
   [enriched-deck output-dir]
-  (mapcat (fn [{:keys [count code card-number name expansion] :as entry}]
-            (let [n (validate-deck-entry! entry)
-                  source-path (!card-image-file! code card-number)]
-              (map (fn [copy-index]
-                     (!copy-file! source-path
-                                  (str (io/file output-dir
-                                                (deck-image-export-filename entry copy-index)))))
-                   (range 1 (inc n)))))
-          enriched-deck))
+  (doall
+    (mapcat (fn [{:keys [count code card-number name] :as entry}]
+              (let [n (validate-deck-entry! entry)
+                    source-path (card-image-file! code card-number)]
+                (map (fn [copy-index]
+                       (copy-file! source-path
+                                   (str (io/file output-dir
+                                                 (deck-image-export-filename entry copy-index)))))
+                     (range 1 (inc n)))))
+            enriched-deck)))
 
-(defn !export-bulbapedia-deck-images!
+(defn export-bulbapedia-deck-images!
   "Fetches a Bulbapedia deck by title, enriches it with Limitless codes, and writes
    all card image copies to `output-dir`. Returns written file paths."
   [deck-title output-dir]
-  (-> (!scrape-bulbapedia-deck-cards-with-codes deck-title)
-      (!write-deck-images! output-dir)))
+  (-> (scrape-bulbapedia-deck-cards-with-codes! deck-title)
+      (write-deck-images! output-dir)))

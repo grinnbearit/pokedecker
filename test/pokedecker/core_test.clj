@@ -3,6 +3,7 @@
             [pokedecker.core :as sut])
   (:import (java.awt.image BufferedImage)
            (java.nio.file Files)
+           (java.time LocalDate)
            (javax.imageio ImageIO)
            (org.jsoup Jsoup)))
 
@@ -21,7 +22,7 @@
         tr (.selectFirst (Jsoup/parse html) "tr")]
     (is (= {:name "Ascended Heroes"
             :code "ASC"
-            :release-date "2026-01-30"}
+            :release-date (LocalDate/of 2026 1 30)}
            (sut/parse-expansion-row tr)))))
 
 (deftest parse-expansion-row-without-date-test
@@ -45,14 +46,14 @@
 (deftest expansion-name->code-cache-test
   (sut/clear-expansion-code-cache!)
   (let [calls (atom 0)]
-    (with-redefs [sut/!scrape-expansions (fn []
+    (with-redefs [sut/scrape-expansions! (fn []
                                            (swap! calls inc)
                                            [{:name "Base Set" :code "BS"}
                                             {:name "WOTC Promos" :code "WP"}])]
-      (is (= "BS" (sut/!expansion-name->code "Base Set")))
-      (is (= "BS" (sut/!expansion-name->code " base   set ")))
-      (is (= "WP" (sut/!expansion-name->code "WOTC Promos")))
-      (is (nil? (sut/!expansion-name->code "Not A Set")))
+      (is (= "BS" (sut/expansion-name->code! "Base Set")))
+      (is (= "BS" (sut/expansion-name->code! " base   set ")))
+      (is (= "WP" (sut/expansion-name->code! "WOTC Promos")))
+      (is (nil? (sut/expansion-name->code! "Not A Set")))
       (is (= 1 @calls))))
   (sut/clear-expansion-code-cache!))
 
@@ -74,10 +75,10 @@
         source-url (.toString (.toURI (java.io.File. (write-test-png! source-path))))
         fetch-calls (atom 0)]
     (binding [sut/*card-image-cache-root* (.getAbsolutePath tmp-dir)]
-      (with-redefs [sut/!fetch-card-image-url (fn [_ _]
+      (with-redefs [sut/fetch-card-image-url! (fn [_ _]
                                                 (swap! fetch-calls inc)
                                                 source-url)]
-        (let [img (sut/!card-image! "WP" 1)
+        (let [img (sut/card-image! "WP" 1)
               cached-path (sut/card-image-cache-path "WP" 1)]
           (is (instance? BufferedImage img))
           (is (= 2 (.getWidth img)))
@@ -89,9 +90,9 @@
     (binding [sut/*card-image-cache-root* (.getAbsolutePath tmp-dir)]
       (let [cached-path (sut/card-image-cache-path "BS" 6)]
         (write-test-png! cached-path)
-        (with-redefs [sut/!fetch-card-image-url (fn [& _]
+        (with-redefs [sut/fetch-card-image-url! (fn [& _]
                                                   (throw (ex-info "should not fetch" {})))]
-          (let [img (sut/!card-image! "BS" 6)]
+          (let [img (sut/card-image! "BS" 6)]
             (is (instance? BufferedImage img))
             (is (= 3 (.getHeight img)))))))))
 
@@ -207,15 +208,15 @@
            (vec (sut/enrich-deck-cards-with-limitless-codes deck-cards lookup))))))
 
 (deftest scrape-bulbapedia-deck-cards-with-codes-test
-  (with-redefs [sut/!scrape-bulbapedia-deck-cards (fn [deck-title]
+  (with-redefs [sut/scrape-bulbapedia-deck-cards! (fn [deck-title]
                                                     (is (= "Overgrowth" deck-title))
                                                     [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6"}
                                                      {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35"}])
-                sut/!expansion-name->code (fn [expansion]
+                sut/expansion-name->code! (fn [expansion]
                                             ({"Base Set" "BS"} expansion))]
     (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}
             {:count 2 :name "Magikarp" :expansion "Base Set" :card-number "35" :code "BS"}]
-           (vec (sut/!scrape-bulbapedia-deck-cards-with-codes "Overgrowth"))))))
+           (vec (sut/scrape-bulbapedia-deck-cards-with-codes! "Overgrowth"))))))
 
 (deftest deck-image-export-filename-test
   (is (= "BS_6_001_Gyarados.png"
@@ -229,11 +230,11 @@
   (let [tmp-dir (.toFile (Files/createTempDirectory "pokedecker-deck-out" (make-array java.nio.file.attribute.FileAttribute 0)))
         source-path (str (.getAbsolutePath tmp-dir) "/source.png")]
     (write-test-png! source-path)
-    (with-redefs [sut/!card-image-file! (fn [code card-number]
+    (with-redefs [sut/card-image-file! (fn [code card-number]
                                           (is (= "BS" code))
                                           (is (= "6" (str card-number)))
                                           source-path)]
-      (let [written (vec (sut/!write-deck-images!
+      (let [written (vec (sut/write-deck-images!
                           [{:count 2 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}]
                           (str (.getAbsolutePath tmp-dir) "/export")))]
         (is (= 2 (count written)))
@@ -245,19 +246,18 @@
   (is (thrown-with-msg?
        clojure.lang.ExceptionInfo
        #"Missing Limitless code"
-       (dorun
-        (sut/!write-deck-images!
-         [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code nil}]
-         "tmp/out")))))
+       (sut/write-deck-images!
+        [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code nil}]
+        "tmp/out"))))
 
 (deftest export-bulbapedia-deck-images-test
-  (with-redefs [sut/!scrape-bulbapedia-deck-cards-with-codes (fn [deck-title]
+  (with-redefs [sut/scrape-bulbapedia-deck-cards-with-codes! (fn [deck-title]
                                                                (is (= "Overgrowth" deck-title))
                                                                [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}])
-                sut/!write-deck-images! (fn [deck output-dir]
+                sut/write-deck-images! (fn [deck output-dir]
                                           (is (= [{:count 1 :name "Gyarados" :expansion "Base Set" :card-number "6" :code "BS"}]
                                                  (vec deck)))
                                           (is (= "output/overgrowth" output-dir))
                                           ["output/overgrowth/BS_6_001_Gyarados.png"])]
     (is (= ["output/overgrowth/BS_6_001_Gyarados.png"]
-           (vec (sut/!export-bulbapedia-deck-images! "Overgrowth" "output/overgrowth"))))))
+           (vec (sut/export-bulbapedia-deck-images! "Overgrowth" "output/overgrowth"))))))
